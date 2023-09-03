@@ -29,7 +29,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(port, nil))
 }
 
-func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Request_ServiceInfo) {
+func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Request_ServiceInfo) int {
 	//Generate secret keys and nonces for encryption
 	secretKey, err := mychacha20.GenerateChaCha20Key()
 	if err != nil {
@@ -69,7 +69,7 @@ func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Requ
 		}
 	}
 
-	log.Printf("Intersection Size: %d\n", commonCount)
+	return commonCount
 }
 
 // Creates the necessary structs
@@ -132,9 +132,10 @@ func PSIHandler(w http.ResponseWriter, r *http.Request) {
 
 	c := model.NewMiddlemanClient(conn)
 
-	PSI(c, clientData, serviceinfo)
+	commonCount := PSI(c, clientData, serviceinfo)
 
 	// Respond with a success message
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("CSV file and list of names received and processed successfully"))
+	// Convert the integer to a string and write it to the response body
+	w.Write([]byte(fmt.Sprintf("%d", commonCount)))
 }
