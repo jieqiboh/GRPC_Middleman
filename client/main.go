@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"io"
 	"log"
 	"net/http"
 	"server/model"
 	"server/mychacha20"
 	"strings"
+
+	"github.com/rs/cors"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
@@ -20,13 +22,15 @@ var (
 
 func main() {
 	//Create a HTTP server with a route to handle the "/PSI" endpoint
-	http.HandleFunc("/PSI", PSIHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", PSIHandler)
+	handler := cors.Default().Handler(mux)
 
 	//Start the server on port 3001
 	port := ":3001"
 
 	fmt.Printf("Server listening on %s\n", port)
-	log.Fatal(http.ListenAndServe(port, nil))
+	log.Fatal(http.ListenAndServe(":3001", handler))
 }
 
 func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Request_ServiceInfo) int {
@@ -74,7 +78,7 @@ func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Requ
 
 // Creates the necessary structs
 func PSIHandler(w http.ResponseWriter, r *http.Request) {
-	// Parse the multipart form data
+	// Parse the multipart form data\
 	err := r.ParseMultipartForm(10 << 20) // Set a reasonable max memory limit for form data (10MB)
 	if err != nil {
 		http.Error(w, "Unable to parse form", http.StatusBadRequest)
@@ -114,12 +118,12 @@ func PSIHandler(w http.ResponseWriter, r *http.Request) {
 	for _, str := range records {
 		clientData = append(clientData, []byte(str))
 	}
-
 	// Split the input string by spaces
 	svcinfo = strings.Split(svcinfo[0], " ")
 
 	// Iterate through svcinfo and create serviceinfo []*model.Request_ServiceInfo
 	var serviceinfo []*model.Request_ServiceInfo
+
 	for i := 0; i < len(svcinfo); i += 2 {
 		serviceinfo = append(serviceinfo, &model.Request_ServiceInfo{ServiceName: svcinfo[i], MethodName: svcinfo[i+1]})
 	}
