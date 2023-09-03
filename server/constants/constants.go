@@ -9,5 +9,5 @@ func ToConstant(s string) string {
 }
 
 const (
-	APIGATEWAY_URL = "http://localhost:8888/PSI"
+	APIGATEWAY_URL = "http://localhost:8888"
 )
