@@ -11,3 +11,7 @@ func ToConstant(s string) string {
 const (
 	APIGATEWAY_URL = "http://localhost:8888"
 )
+
+const (
+	GRPC_PORT = 7999 //To be customised by the user
+)

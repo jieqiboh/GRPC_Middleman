@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
 	"net/http"
 	"server/constants"
@@ -23,10 +25,12 @@ type server struct {
 func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, error) {
 	secretKey, err := mychacha20.GenerateChaCha20Key()
 	if err != nil {
+		fmt.Println("mychacha20.GenerateChaCha20Key failed:", err)
 		return &model.Response{}, nil
 	}
 	secretNonce, err := mychacha20.GenerateChaCha20Nonce()
 	if err != nil {
+		fmt.Println("mychacha20.GenerateChaCha20Nonce failed:", err)
 		return &model.Response{}, nil
 	}
 
@@ -36,12 +40,18 @@ func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, e
 	serviceInfoList := extractRequestSvcInfo(in)
 	log.Printf("Extracted SvcInfo:")
 	log.Print(serviceInfoList)
+
 	APIGatewayURL := constants.APIGATEWAY_URL
 	response, err := makePSIReqToAPIGateway(APIGatewayURL, serviceInfoList)
 	defer response.Body.Close()
+	if err != nil {
+		fmt.Println("makePSIReqToAPIGateway failed:", err)
+		return nil, status.Errorf(codes.Internal, "Internal Server Error")
+	}
 	microsvcIntersection, err := extractResponseAsListBytes(response)
 	if err != nil {
-		return nil, err
+		fmt.Println("extractResponseAsListBytes failed:", err)
+		return nil, status.Errorf(codes.Internal, "Internal Server Error")
 	}
 
 	//Encrypt data from client
@@ -55,7 +65,7 @@ func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, e
 		return &model.Response{}, nil
 	}
 
-	return &model.Response{DoubleEncryptedElems: in.EncryptedElems, EncryptedServerElems: microsvcIntersection}, nil
+	return &model.Response{DoubleEncryptedElems: in.EncryptedElems, EncryptedServerElems: microsvcIntersection}, status.Errorf(codes.OK, "PSI Successful")
 }
 
 // HELPER METHODS
@@ -97,10 +107,9 @@ func makePSIReqToAPIGateway(serverURL string, serviceInfoList [][]string) (*http
 
 	// Check the response status code
 	if resp.StatusCode != http.StatusOK {
-		fmt.Println("HTTP request failed with status code:", resp.StatusCode)
-		return nil, nil
+		fmt.Println("HTTP request failed:", resp.Body)
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid microservice name or method")
 	}
-	fmt.Println("Svc Intersection Req to API Gateway successful")
 
 	return resp, nil
 }

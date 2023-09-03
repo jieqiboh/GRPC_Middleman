@@ -5,11 +5,12 @@ import (
 	"google.golang.org/grpc"
 	"log"
 	"net"
+	"server/constants"
 	"server/model"
 )
 
 func main() {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 7999))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", constants.GRPC_PORT))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
