@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"github.com/cloudwego/hertz/pkg/app/client"
+	"github.com/cloudwego/hertz/pkg/protocol"
+	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"io"
-	"net/http"
 	"server/constants"
 
 	"log"
@@ -26,28 +25,36 @@ func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, e
 	secretKey, err := mychacha20.GenerateChaCha20Key()
 	if err != nil {
 		fmt.Println("mychacha20.GenerateChaCha20Key failed:", err)
-		return &model.Response{}, nil
+		return &model.Response{}, status.Errorf(codes.Internal, "Internal Server Error")
 	}
 	secretNonce, err := mychacha20.GenerateChaCha20Nonce()
 	if err != nil {
 		fmt.Println("mychacha20.GenerateChaCha20Nonce failed:", err)
-		return &model.Response{}, nil
+		return &model.Response{}, status.Errorf(codes.Internal, "Internal Server Error")
 	}
 
 	//Asynchronously make HTTP requests to API Gateway asking for intersection of microsvc data
 	//If invalid params, immediately terminate entire operation
 	log.Printf("Received SvcInfo: %v", in.GetSvcInfo())
-	serviceInfoList := extractRequestSvcInfo(in)
-	log.Printf("Extracted SvcInfo:")
-	log.Print(serviceInfoList)
+	serviceInfoList, err := extractRequestSvcInfo(in)
+	if err != nil {
+		fmt.Println("extractRequestSvcInfo failed:", err.Error())
+		return &model.Response{}, err
+	}
 
 	APIGatewayURL := constants.APIGATEWAY_URL
-	response, err := makePSIReqToAPIGateway(APIGatewayURL, serviceInfoList)
-	defer response.Body.Close()
-	if err != nil {
-		fmt.Println("makePSIReqToAPIGateway failed:", err)
+	response, err := makePSIReqToAPIGateway(ctx, APIGatewayURL, serviceInfoList)
+
+	if response.StatusCode() == consts.StatusInternalServerError {
+		fmt.Println("makePSIReqToAPIGateway failed:" + string(response.Body()))
 		return nil, status.Errorf(codes.Internal, "Internal Server Error")
+	} else if response.StatusCode() == consts.StatusBadRequest {
+		fmt.Println("makePSIReqToAPIGateway failed:" + string(response.Body()))
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid Service or Method Name")
+	} else if err != nil {
+		return nil, err
 	}
+
 	microsvcIntersection, err := extractResponseAsListBytes(response)
 	if err != nil {
 		fmt.Println("extractResponseAsListBytes failed:", err)
@@ -57,12 +64,14 @@ func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, e
 	//Encrypt data from client
 	err = mychacha20.Encrypt(secretKey, secretNonce, in.EncryptedElems)
 	if err != nil {
-		return &model.Response{}, nil
+		fmt.Println("mychacha20.Encrypt failed:", err)
+		return &model.Response{}, status.Errorf(codes.Internal, "Internal Server Error")
 	}
 
 	err = mychacha20.Encrypt(secretKey, secretNonce, microsvcIntersection)
 	if err != nil {
-		return &model.Response{}, nil
+		fmt.Println("mychacha20.Encrypt failed:", err)
+		return &model.Response{}, status.Errorf(codes.Internal, "Internal Server Error")
 	}
 
 	return &model.Response{DoubleEncryptedElems: in.EncryptedElems, EncryptedServerElems: microsvcIntersection}, status.Errorf(codes.OK, "PSI Successful")
@@ -70,69 +79,51 @@ func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, e
 
 // HELPER METHODS
 // Used to write code for overarching steps of handlers.
-func extractRequestSvcInfo(in *model.Request) [][]string {
+func extractRequestSvcInfo(in *model.Request) ([][]string, error) {
+	if in.GetSvcInfo() == nil || len(in.SvcInfo) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "Service Info provided empty")
+	}
 	serviceInfoList := make([][]string, len(in.SvcInfo))
 	for i, info := range in.SvcInfo {
 		serviceInfoList[i] = []string{info.ServiceName, info.MethodName}
 	}
 
-	return serviceInfoList
+	return serviceInfoList, nil
 }
 
 // Response body should be a json list containing intersection
-func makePSIReqToAPIGateway(serverURL string, serviceInfoList [][]string) (*http.Response, error) {
+func makePSIReqToAPIGateway(ctx context.Context, serverURL string, serviceInfoList [][]string) (*protocol.Response, error) {
 	// Convert serviceInfoList to JSON
 	jsonData, err := json.Marshal(serviceInfoList)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "Unable to marshal Service Info to JSON")
 	}
 
-	// Create an HTTP POST request with the JSON data
-	req, err := http.NewRequest("POST", serverURL+"/PSI", bytes.NewReader(jsonData))
+	// Create an Hertz HTTP client to communicate with API Gateway
+	c, err := client.NewClient()
+	if err != nil {
+		return nil, err
+	}
+	req := &protocol.Request{}
+	req.SetBody(jsonData)
+	res := &protocol.Response{}
+	req.SetMethod(consts.MethodPost)
+	req.Header.SetContentTypeBytes([]byte("application/json"))
+	req.SetRequestURI(serverURL + "/PSI")
+	err = c.Do(context.Background(), req, res)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set the Content-Type header
-	req.Header.Set("Content-Type", "application/json")
-
-	// Create an HTTP client
-	client := &http.Client{}
-
-	// Send the HTTP request
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check the response status code
-	if resp.StatusCode != http.StatusOK {
-		fmt.Println("HTTP request failed:", resp.Body)
-		return nil, status.Errorf(codes.InvalidArgument, "Invalid microservice name or method")
-	}
-
-	return resp, nil
+	return res, nil
 }
 
-func extractResponseAsListBytes(resp *http.Response) ([][]byte, error) {
-	// Check if the response status code is OK (200)
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New("HTTP request failed with status code: " + resp.Status)
-	}
-
-	// Read the response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
+func extractResponseAsListBytes(resp *protocol.Response) ([][]byte, error) {
 	// Unmarshal the JSON response into a []string
 	var stringList []string
-	if err := json.Unmarshal(body, &stringList); err != nil {
-		return nil, err
+	if err := json.Unmarshal(resp.BodyBytes(), &stringList); err != nil {
+		return nil, status.Errorf(codes.Internal, "Unable to marshal JSON to string list")
 	}
-	fmt.Print("extractResponseAsListBytes stringlist: ")
-	fmt.Println(stringList)
 
 	// Convert each string to []byte and append it to byteList
 	var byteList [][]byte

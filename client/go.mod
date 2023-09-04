@@ -2,7 +2,10 @@ module client
 
 go 1.20
 
-require google.golang.org/grpc v1.57.0
+require (
+	github.com/rs/cors v1.9.0
+	google.golang.org/grpc v1.57.0
+)
 
 require (
 	github.com/golang/protobuf v1.5.3 // indirect

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"client/constants"
 	"context"
 	"encoding/csv"
 	"fmt"
+	"github.com/rs/cors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"io"
@@ -14,30 +16,28 @@ import (
 	"strings"
 )
 
-var (
-	addr = "localhost:7999"
-)
-
 func main() {
 	//Create a HTTP server with a route to handle the "/PSI" endpoint
-	http.HandleFunc("/PSI", PSIHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", PSIHandler)
+	handler := cors.Default().Handler(mux)
 
 	//Start the server on port 3001
-	port := ":3001"
+	port := ":" + constants.OWN_PORT
 
 	fmt.Printf("Server listening on %s\n", port)
-	log.Fatal(http.ListenAndServe(port, nil))
+	log.Fatal(http.ListenAndServe(port, handler))
 }
 
-func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Request_ServiceInfo) int {
+func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Request_ServiceInfo) (int, error) {
 	//Generate secret keys and nonces for encryption
 	secretKey, err := mychacha20.GenerateChaCha20Key()
 	if err != nil {
-		panic(err)
+		return -1, err
 	}
 	secretNonce, err := mychacha20.GenerateChaCha20Nonce()
 	if err != nil {
-		panic(err)
+		return -1, err
 	}
 
 	mychacha20.Encrypt(secretKey, secretNonce, clientData)
@@ -46,7 +46,8 @@ func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Requ
 	ctx := context.Background()
 	r, err := c.PSI(ctx, &model.Request{EncryptedElems: clientData, SvcInfo: serviceinfo})
 	if err != nil {
-		log.Fatalf("could not do PSI: %v", err)
+		fmt.Println(err.Error())
+		return -1, err
 	}
 
 	//Client decrypts double encrypted client data with own key
@@ -69,7 +70,7 @@ func PSI(c model.MiddlemanClient, clientData [][]byte, serviceinfo []*model.Requ
 		}
 	}
 
-	return commonCount
+	return commonCount, nil
 }
 
 // Creates the necessary structs
@@ -80,6 +81,9 @@ func PSIHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unable to parse form", http.StatusBadRequest)
 		return
 	}
+
+	// Get the upstreamurl from the form
+	upstreamurl := r.Form["upstreamurl"][0]
 
 	// Get the CSV file from the form
 	file, _, err := r.FormFile("csvfile")
@@ -124,15 +128,23 @@ func PSIHandler(w http.ResponseWriter, r *http.Request) {
 		serviceinfo = append(serviceinfo, &model.Request_ServiceInfo{ServiceName: svcinfo[i], MethodName: svcinfo[i+1]})
 	}
 
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(upstreamurl, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("did not connect: %v", err)
+		w.WriteHeader(http.StatusNotFound)
+		log.Printf("did not connect: %v", err)
+		return
 	}
 	defer conn.Close()
 
 	c := model.NewMiddlemanClient(conn)
 
-	commonCount := PSI(c, clientData, serviceinfo)
+	commonCount, err := PSI(c, clientData, serviceinfo) //-1 if error
+	if err != nil {
+		// Respond with a success message
+		log.Printf("could not do PSI: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	// Respond with a success message
 	w.WriteHeader(http.StatusOK)
