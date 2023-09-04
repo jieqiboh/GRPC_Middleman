@@ -45,7 +45,7 @@ func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, e
 	APIGatewayURL := constants.APIGATEWAY_URL
 	response, err := makePSIReqToAPIGateway(ctx, APIGatewayURL, serviceInfoList)
 
-	if response.StatusCode() == consts.StatusInternalServerError {
+	if response.StatusCode() == consts.StatusInternalServerError || response == nil {
 		fmt.Println("makePSIReqToAPIGateway failed:" + string(response.Body()))
 		return nil, status.Errorf(codes.Internal, "Internal Server Error")
 	} else if response.StatusCode() == consts.StatusBadRequest {
@@ -74,7 +74,7 @@ func (s *server) PSI(ctx context.Context, in *model.Request) (*model.Response, e
 		return &model.Response{}, status.Errorf(codes.Internal, "Internal Server Error")
 	}
 
-	return &model.Response{DoubleEncryptedElems: in.EncryptedElems, EncryptedServerElems: microsvcIntersection}, status.Errorf(codes.OK, "PSI Successful")
+	return &model.Response{DoubleEncryptedElems: in.EncryptedElems, EncryptedServerElems: microsvcIntersection}, nil
 }
 
 // HELPER METHODS

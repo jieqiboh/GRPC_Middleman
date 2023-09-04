@@ -5,12 +5,22 @@ import (
 	"google.golang.org/grpc"
 	"log"
 	"net"
-	"server/constants"
+	"os"
 	"server/model"
+	"strconv"
 )
 
 func main() {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", constants.GRPC_PORT))
+	GPRC_PORT := os.Args[1]
+
+	// Convert the string to an integer
+	port, err := strconv.Atoi(GPRC_PORT)
+	if err != nil {
+		fmt.Printf("Error converting port to integer: %v\n", err)
+		os.Exit(1)
+	}
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
